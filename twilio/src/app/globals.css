@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'PT Sans', sans-serif;
+}
+
+@layer base {
+  :root {
+    --background: 120 29% 96%; /* #F0F8F0 */
+    --foreground: 20 15% 15%;
+    --card: 0 0% 100%;
+    --card-foreground: 20 15% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 20 15% 15%;
+    --primary: 25 56% 41%; /* Earthy brown #A0522D */
+    --primary-foreground: 40 50% 98%;
+    --secondary: 120 25% 85%;
+    --secondary-foreground: 120 25% 25%;
+    --muted: 120 15% 90%;
+    --muted-foreground: 20 10% 40%;
+    --accent: 120 25% 65%; /* Soft green #8FBC8F */
+    --accent-foreground: 120 25% 25%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 120 10% 88%;
+    --input: 120 10% 88%;
+    --ring: 120 25% 65%; /* Soft green for focus rings */
+    --chart-1: 12 76% 61%;
+    --chart-2: 173 58% 39%;
+    --chart-3: 197 37% 24%;
+    --chart-4: 43 74% 66%;
+    --chart-5: 27 87% 67%;
+    --radius: 0.5rem;
+  }
+  .dark {
+    --background: 20 15% 8%;
+    --foreground: 120 10% 95%;
+    --card: 20 15% 12%;
+    --card-foreground: 120 10% 95%;
+    --popover: 20 15% 8%;
+    --popover-foreground: 120 10% 95%;
+    --primary: 120 25% 65%; /* Soft green */
+    --primary-foreground: 120 25% 15%;
+    --secondary: 25 56% 25%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 20 15% 15%;
+    --muted-foreground: 20 10% 60%;
+    --accent: 25 56% 41%; /* Earthy brown */
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 20 15% 20%;
+    --input: 20 15% 20%;
+    --ring: 120 25% 65%;
+    --chart-1: 220 70% 50%;
+    --chart-2: 160 60% 45%;
+    --chart-3: 30 80% 55%;
+    --chart-4: 280 65% 60%;
+    --chart-5: 340 75% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
