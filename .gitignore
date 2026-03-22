@@ -44,3 +44,5 @@ twilio/.next
 twilio/node_modules
 twilio/.env
 twilio/.env.local
+# clerk configuration (can include secrets)
+/.clerk/

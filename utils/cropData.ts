@@ -156,7 +156,13 @@ export const regionClimateData: Record<string, any> = {
     current: "tropical", 
     rainfall: "high", 
     suitable_crops: ["rice", "coconut", "rubber"],
-    description: "Kerala has a tropical climate with high rainfall and humidity throughout the year, making it suitable for plantation crops."
+    description: "Kerala has a tropical climate with high rainfall and humidity throughout year, making it suitable for plantation crops."
+  },
+  "karnataka": {
+    current: "tropical to semi-arid",
+    rainfall: "moderate to high",
+    suitable_crops: ["ragi", "maize", "paddy", "groundnut"],
+    description: "Karnataka has diverse agro-climatic zones with tropical conditions in many regions, monsoon-dependent rainfall, and strong suitability for millets, maize, paddy, and oilseeds."
   },
   "gujarat": { 
     current: "hot", 
@@ -178,3 +184,34 @@ export const regionClimateData: Record<string, any> = {
     description: "This region has variable climate conditions with moderate rainfall, suitable for a range of crops."
   }
 }; 
+
+// Function to get climate data for a state
+export function getStateClimateData(state: string): any {
+  const stateLower = state.toLowerCase();
+  
+  for (const region in regionClimateData) {
+    if (stateLower.includes(region) || region.includes(stateLower)) {
+      return regionClimateData[region];
+    }
+  }
+  
+  const stateToRegionMap: Record<string, string> = {
+    "andhra pradesh": "maharashtra",
+    "telangana": "maharashtra", 
+    "tamil nadu": "kerala",
+    "karnataka": "karnataka",
+    "uttar pradesh": "punjab",
+    "bihar": "west bengal",
+    "west bengal": "west bengal",
+    "rajasthan": "gujarat",
+    "madhya pradesh": "maharashtra",
+    "haryana": "punjab",
+    "punjab": "punjab",
+    "gujarat": "gujarat",
+    "kerala": "kerala",
+    "maharashtra": "maharashtra"
+  };
+  
+  const mappedRegion = stateToRegionMap[stateLower] || "default";
+  return regionClimateData[mappedRegion];
+}

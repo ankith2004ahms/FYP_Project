@@ -1,22 +1,54 @@
-import { NextResponse } from 'next/server';
-import { cropData, getCurrentSeason, getHarvestSeason, regionClimateData } from '@/utils/cropData';
+import { NextResponse, NextRequest } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
+import { connectMongoose } from '@/lib/mongoose';
+import { CropRecommendation } from '@/models';
+import { getCurrentSeason, getHarvestSeason, getStateClimateData } from '@/utils/cropData';
+import { generateTextWithFallback } from '@/utils/api-fallback';
 
-import { generateJSON, generateText } from '@/utils/ollama';
-const ollama_model = process.env.OLLAMA_MODEL;
+// Define the expected response type
+interface CropSuggestionResponse {
+  message: string;
+  suggestedCrops: Array<{
+    name: string;
+    rationale: string;
+  }>;
+}
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    console.log('=== Crop Suggestion POST Debug ===');
     
+    const { userId } = await auth();
+    console.log('User ID:', userId);
+    
+    if (!userId) {
+      console.log('No userId found - returning 401');
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
 
     const { timeRange, state, plantingSeason, soilType, language = 'english' } = await request.json();
-    
-   
+    console.log('Request data:', { timeRange, state, plantingSeason, soilType, language });
+
+    if (
+      typeof timeRange !== 'number' ||
+      !state ||
+      !plantingSeason ||
+      !soilType
+    ) {
+      return NextResponse.json(
+        { error: 'Required fields: timeRange (number), state, plantingSeason, soilType' },
+        { status: 400 }
+      );
+    }
+
     const climateData = getStateClimateData(state);
+    console.log('Climate data:', climateData);
     
     const currentSeason = getCurrentSeason();
     const harvestSeason = getHarvestSeason(timeRange);
+    console.log('Seasons:', { currentSeason, harvestSeason });
     
-    const suggestions = await generateCropSuggestions(
+    let suggestions: CropSuggestionResponse = await generateCropSuggestions(
       timeRange,
       state,
       plantingSeason,
@@ -27,48 +59,93 @@ export async function POST(request: Request) {
       language
     );
     
+    // Validate suggestions structure and use fallback if needed
+    if (!suggestions || !suggestions.suggestedCrops || !Array.isArray(suggestions.suggestedCrops)) {
+      console.error('Invalid suggestions format from generateCropSuggestions:', suggestions);
+      
+      // Use fallback crops
+      const seasonCrops: Record<string, string[]> = {
+        "Kharif": ["Rice", "Maize", "Cotton"],
+        "Rabi": ["Wheat", "Barley", "Mustard"],
+        "Zaid": ["Watermelon", "Cucumber", "Tomato"]
+      };
+      
+      const defaultCrops = seasonCrops[plantingSeason] || ["Rice", "Wheat"];
+      suggestions = {
+        message: "AI response validation failed. Using default recommendations.",
+        suggestedCrops: defaultCrops.slice(0, 3).map((crop: string) => ({
+          name: crop,
+          rationale: "Suitable for this season and region"
+        }))
+      };
+      
+      console.log('Using fallback suggestions:', suggestions);
+    } else {
+      console.log('Valid AI suggestions received:', suggestions);
+    }
+    // Save to database
+    const cleanSeason = plantingSeason.split(' ')[0].toLowerCase();
+    
+    // Map season names to database enum values
+    const seasonMapping: Record<string, string> = {
+      'kharif': 'kharif',
+      'rabi': 'rabi',
+      'zaid': 'zaid',
+      'summer': 'summer',
+      'winter': 'winter',
+      'monsoon': 'monsoon'
+    };
+    
+    const dbSeason = seasonMapping[cleanSeason] || cleanSeason;
+    console.log('Season mapping:', { original: plantingSeason, clean: cleanSeason, db: dbSeason });
+    
+    console.log('Connecting to MongoDB...');
+    await connectMongoose();
+
+    const cropRecommendation = new CropRecommendation({
+      userId,
+      season: dbSeason,
+      location: {
+        state,
+        climate: climateData
+      },
+      soilType,
+      timeRange,
+      recommendedCrops: suggestions.suggestedCrops.map((crop) => ({
+        cropName: crop.name,
+        confidence: 85,
+        rationale: crop.rationale || "Recommended based on season and regional conditions",
+        expectedYield: null,
+        marketPrice: null
+      })),
+      aiAnalysis: {
+        reasoning: suggestions.message,
+        confidence: 90,
+        dataPoints: {
+          climate: climateData,
+          season: dbSeason,
+          soil: soilType
+        }
+      },
+      status: 'completed'
+    });
+    
+    console.log('Saving to database...');
+    await cropRecommendation.save();
+    console.log('Crop recommendation saved successfully');
     
     return NextResponse.json(suggestions);
   } catch (error) {
     console.error('Error in crop-suggestion API:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
     return NextResponse.json(
-      { error: "Internal server error" },
+      { 
+        error: "Internal server error",
+        details: error instanceof Error ? error.message : 'Unknown error'
+      },
       { status: 500 }
     );
   }
-}
-
-function getStateClimateData(state: string) {
-  const stateLower = state.toLowerCase();
-  
-  for (const region in regionClimateData) {
-    if (stateLower.includes(region) || region.includes(stateLower)) {
-      return regionClimateData[region];
-    }
-  }
-  
-  const stateToRegionMap: Record<string, string> = {
-    "andhra pradesh": "maharashtra",
-    "telangana": "maharashtra",
-    "tamil nadu": "kerala",
-    "madhya pradesh": "maharashtra",
-    "rajasthan": "gujarat",
-    "haryana": "punjab",
-    "uttar pradesh": "punjab",
-    "bihar": "west bengal",
-    "jharkhand": "west bengal",
-    "odisha": "west bengal",
-    "chhattisgarh": "maharashtra",
-    "assam": "west bengal",
-    "himachal pradesh": "punjab",
-    "uttarakhand": "punjab"
-  };
-  
-  if (stateToRegionMap[stateLower]) {
-    return regionClimateData[stateToRegionMap[stateLower]];
-  }
-  
-  return regionClimateData["default"];
 }
 
 async function generateCropSuggestions(
@@ -79,274 +156,162 @@ async function generateCropSuggestions(
   currentSeason: string,
   harvestSeason: string,
   climateData: any,
-  language: string = 'english'
-) {
+  language: string
+): Promise<CropSuggestionResponse> {
   try {
-    const currentDate = new Date();
-    const harvestDate = new Date();
-    harvestDate.setMonth(harvestDate.getMonth() + timeRange);
+    // Default crops for each season as fallback
+    const seasonCrops: Record<string, string[]> = {
+      "Kharif": ["Rice", "Maize", "Cotton", "Soybean"],
+      "Rabi": ["Wheat", "Barley", "Mustard", "Peas"],
+      "Zaid": ["Watermelon", "Cucumber", "Tomato", "Bitter Gourd"]
+    };
+
+    const prompt = `As an agricultural expert, suggest 3-4 best crops for ${state} with ${soilType} soil for ${plantingSeason} season, considering:
+    - Climate: ${JSON.stringify(climateData)}
+    - Harvest time: ${timeRange} months
+    - Current season: ${currentSeason}
+    - Expected harvest season: ${harvestSeason}
+
+    Return plain text only in this exact machine-readable structure:
+    SUMMARY: one short summary in ${language}
+    CROP: crop name in ${language}
+    REASON: detailed reason in ${language}
+    CROP: crop name in ${language}
+    REASON: detailed reason in ${language}
+    CROP: crop name in ${language}
+    REASON: detailed reason in ${language}
+    CROP: crop name in ${language}
+    REASON: detailed reason in ${language}
+
+    Consider factors like:
+    - Temperature and rainfall patterns
+    - Soil compatibility
+    - Market demand
+    - Growing season duration
+    - Local farming practices
+
+    IMPORTANT:
+    - Keep the labels exactly as SUMMARY:, CROP:, and REASON:
+    - Do not use JSON
+    - Do not use markdown
+    - Write the actual recommendation content in ${language}`;
+
+    const systemPrompt = "You are an agricultural expert providing crop recommendations. Return plain text only. Never return JSON. Never use markdown code blocks. Always keep the structural labels exactly as SUMMARY:, CROP:, and REASON:. Strictly respond in the language specified by the user for the recommendation content.";
+
+    const rawResponse = await generateTextWithFallback(
+      prompt,
+      `${systemPrompt} RESPOND STRICTLY IN ${language.toUpperCase()}. LANGUAGE`,
+      language
+    );
+
+    console.log('Raw crop suggestion response:', rawResponse);
+
+    let suggestions = parseCropSuggestionText(rawResponse);
     
-    const selectedSeason = plantingSeason.split(" ")[0];
-    
-    const prompt = `
-I need crop recommendations for these farming conditions:
-- State: ${state}
-- Soil: ${soilType}
-- Season: ${selectedSeason}
-- Growing period: ${timeRange} months
-- Climate: ${climateData.description || `${state} climate`}
-- Rainfall: ${climateData.rainfall || "Variable"}
-
-Please recommend 3-4 suitable crops. For each crop, include:
-1. The crop name
-2. Why it's good for this climate, soil, and growing period
-
-Keep each explanation brief but informative.
-
-RESPOND IN EXACTLY THIS JSON FORMAT (very important):
-{
-  "message": "Brief overview of farming situation",
-  "suggestedCrops": [
-    {
-      "name": "Crop Name",
-      "rationale": "Explanation why suitable"
-    },
-    ...
-  ]
-}
-
-Provide your response in ${language} language.
-`;
-
-    const systemPrompt = `You are an agricultural expert specialized in Indian farming. You provide accurate crop recommendations based on local conditions. You ALWAYS respond in valid JSON format exactly as requested. Respond in ${language}.`;
-
-
-    try {
-      // check Ollama availability early to provide a clear fallback if the daemon is down
-      try {
-        const { listModels } = await import('@/utils/ollama');
-        await listModels(); // will throw if server unreachable
-      } catch (availErr) {
-        console.error('Ollama appears unreachable; skipping model generation and returning fallback response.', availErr);
-        return createFallbackResponse(language);
-      }
-
-      const modelToUse = ollama_model || 'llama3.2:1b';
-
-      try {
-        // Await the model call directly. The lower-level fetch uses a configurable timeout (OLLAMA_FETCH_TIMEOUT_MS),
-        // so we avoid adding another route-level timeout that could prematurely abort long-running model responses.
-        const result = await generateJSON<{
-          message: string;
-          suggestedCrops: { name: string; rationale: string }[];
-        }>(modelToUse, prompt, systemPrompt, language);
-
-        // Attempt to coerce many possible model outputs into the canonical format
-        const tryNormalizeResult = (obj: any): { message: string; suggestedCrops: { name: string; rationale: string }[] } | null => {
-          if (!obj) return null;
-
-          const normalizeCropItem = (item: any) => {
-            if (!item) return { name: 'Unknown', rationale: '' };
-            if (typeof item === 'string') return { name: item.split(':')[0] || 'Crop', rationale: item };
-            if (typeof item === 'object') {
-              // common shapes
-              if (item.name && item.rationale) return { name: String(item.name), rationale: String(item.rationale) };
-              if (item.crop && (item.reason || item.rationale)) return { name: String(item.crop), rationale: String(item.reason ?? item.rationale) };
-              if (item.title && item.body) return { name: String(item.title), rationale: String(item.body) };
-              // fallback: stringify
-              return { name: String(item.name ?? item.crop ?? item.title ?? 'Crop'), rationale: String(item.rationale ?? item.reason ?? JSON.stringify(item)) };
-            }
-            return { name: 'Crop', rationale: String(item) };
-          };
-
-          // already in canonical form
-          if (obj.message && Array.isArray(obj.suggestedCrops)) {
-            return {
-              message: String(obj.message),
-              suggestedCrops: obj.suggestedCrops.map(normalizeCropItem)
-            };
-          }
-
-          // common alternative keys
-          const listCandidates = obj.suggestedCrops ?? obj.crops ?? obj.suggestions ?? obj.recommendations ?? obj.recommended ?? obj.results ?? obj.outputs;
-          if (listCandidates) {
-            let arr: any[] = [];
-            if (typeof listCandidates === 'string') arr = [ { name: 'Recommendation', rationale: listCandidates } ];
-            else if (Array.isArray(listCandidates)) arr = listCandidates;
-            else if (typeof listCandidates === 'object') arr = Object.entries(listCandidates).map(([k, v]) => (typeof v === 'string' ? { name: k, rationale: v } : { name: k, rationale: JSON.stringify(v) }));
-
-            return {
-              message: obj.message ? String(obj.message) : 'Crop suggestions',
-              suggestedCrops: arr.map(normalizeCropItem)
-            };
-          }
-
-          // If object contains a textual field that may include JSON or a plain answer
-          const textFields = ['text', 'response', 'output', 'body', 'content'];
-          for (const f of textFields) {
-            if (obj[f] && typeof obj[f] === 'string') {
-              const maybe = extractJsonFromString(obj[f]);
-              if (maybe) {
-                const n = tryNormalizeResult(maybe);
-                if (n) return n;
-              }
-              return { message: obj.message ? String(obj.message) : 'Crop suggestions', suggestedCrops: [{ name: 'Recommendation', rationale: obj[f].trim() }] };
-            }
-          }
-
-          return null;
-        };
-
-        const extractJsonFromString = (str: string) => {
-          if (!str) return null;
-          // try to find the first {...} block
-          const jsonMatch = str.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              return JSON.parse(jsonMatch[0]);
-            } catch (e) {
-              // ignore parse error
-            }
-          }
-          return null;
-        };
-
-        const normalized = tryNormalizeResult(result);
-        if (normalized) return normalized;
-
-        // If normalization failed, attempt to extract JSON/text from the raw model text
-        console.warn('Model returned unexpected shape; attempting to extract useful information from raw output.');
-
-        try {
-          // raw text candidates
-          let rawCandidateText = '';
-          try {
-            if (typeof result === 'string') rawCandidateText = result;
-            else if (result.response && typeof result.response === 'string') rawCandidateText = result.response;
-            else if (Array.isArray(result.outputs)) rawCandidateText = result.outputs.map((o: any) => o.text ?? o.output ?? JSON.stringify(o)).join('\n');
-            else rawCandidateText = JSON.stringify(result);
-          } catch (e) {
-            rawCandidateText = String(result);
-          }
-
-          // try to parse JSON blob from that text
-          const m = extractJsonFromString(rawCandidateText);
-          if (m) {
-            const n2 = tryNormalizeResult(m);
-            if (n2) return n2;
-          }
-
-          // final fallback: call generateText to get raw textual output and parse
-          try {
-            const rawText = await generateText(ollama_model, prompt, systemPrompt, language);
-            console.log('Raw response (fallback):', rawText);
-            const m2 = extractJsonFromString(rawText);
-            if (m2) {
-              const n3 = tryNormalizeResult(m2);
-              if (n3) return n3;
-            }
-
-            return {
-              message: 'Could not parse model response; presenting raw output',
-              suggestedCrops: [
-                { name: 'Raw output', rationale: (rawText || rawCandidateText || '').substring(0, 2000) }
-              ]
-            };
-          } catch (textError) {
-            console.error('Text generation fallback also failed:', textError);
-            return createFallbackResponse(language);
-          }
-        } catch (err) {
-          console.error('Unexpected error while normalizing model output:', err);
-          return createFallbackResponse(language);
-        }
-      } catch (genErr) {
-        // If model is missing/404, try to list available models and fallback to the first available
-        if (String(genErr).includes('404') || /model\s+'?\w+'?\s+not\s+found/i.test(String(genErr))) {
-          try {
-            const { listModels } = await import('@/utils/ollama');
-            const available = await listModels();
-            if (available && available.length > 0) {
-              console.warn('Configured Ollama model not found; falling back to available model:', available[0]);
-              const fallback = await generateJSON<{
-                message: string;
-                suggestedCrops: { name: string; rationale: string }[];
-              }>(available[0], prompt, systemPrompt, language);
-
-              if (fallback && fallback.message && Array.isArray(fallback.suggestedCrops)) {
-                return fallback;
-              }
-            }
-          } catch (listErr) {
-            console.error('Failed to list available Ollama models for fallback:', listErr);
-          }
-        }
-
-        // rethrow to let the upper fallback (text extraction) handle it
-        throw genErr;
-      }
-    } catch (error) {
-      console.error('Error with JSON generation, falling back to text extraction:', error);
+    // Validate suggestions structure
+    if (!suggestions || !suggestions.suggestedCrops || !Array.isArray(suggestions.suggestedCrops)) {
+      console.error('Invalid suggestions format:', suggestions);
+      // Use fallback instead of throwing error
+      const seasonCrops: Record<string, string[]> = {
+        "Kharif": ["Rice", "Maize", "Cotton"],
+        "Rabi": ["Wheat", "Barley", "Mustard"],
+        "Zaid": ["Watermelon", "Cucumber", "Tomato"]
+      };
       
-      try {
-        const rawText = await generateText(ollama_model, prompt, systemPrompt);
-        console.log('Raw response:', rawText);
-        
-        const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          try {
-            const extractedJson = JSON.parse(jsonMatch[0]);
-            
-            if (extractedJson && extractedJson.message && Array.isArray(extractedJson.suggestedCrops)) {
-              return extractedJson;
-            }
-          } catch (err) {
-            console.error('Failed to parse extracted JSON:', err);
-          }
-        }
-        
-        return {
-          message: "Based on your criteria, here are some crop suggestions:",
-          suggestedCrops: [
-            {
-              name: "General Recommendation",
-              rationale: rawText.substring(0, 500)
-            }
-          ]
-        };
-      } catch (textError) {
-        console.error('Text generation fallback also failed:', textError);
-        return createFallbackResponse(language);
-      }
+      const defaultCrops = seasonCrops[plantingSeason] || ["Rice", "Wheat"];
+      suggestions = {
+        message: "Invalid AI response format. Using default recommendations.",
+        suggestedCrops: defaultCrops.slice(0, 3).map((crop: string) => ({
+          name: crop,
+          rationale: "Suitable for this season and region"
+        }))
+      } as CropSuggestionResponse;
     }
+    
+    console.log('Final suggestions being used:', suggestions);
+    return suggestions;
   } catch (error) {
     console.error('Error generating crop suggestions:', error);
-    return createFallbackResponse(language);
+    const seasonCrops: Record<string, string[]> = {
+      "Kharif": ["Rice", "Maize", "Cotton"],
+      "Rabi": ["Wheat", "Barley", "Mustard"],
+      "Zaid": ["Watermelon", "Cucumber", "Tomato"]
+    };
+    
+    const defaultCrops = seasonCrops[plantingSeason] || ["Rice", "Wheat"];
+    return {
+      message: "Error generating AI suggestions. Using default recommendations.",
+      suggestedCrops: defaultCrops.slice(0, 3).map((crop: string) => ({
+        name: crop,
+        rationale: "Suitable for this season and region"
+      }))
+    } as CropSuggestionResponse;
   }
 }
 
-function createFallbackResponse(language: string) {
-  const messages = {
-    english: {
-      message: "We encountered a technical issue while analyzing your data.",
-      error: "Please try again with different parameters or contact support if the problem persists."
-    },
-    hindi: {
-      message: "आपके डेटा का विश्लेषण करते समय हमें एक तकनीकी समस्या का सामना करना पड़ा।",
-      error: "कृपया अलग पैरामीटर के साथ फिर से प्रयास करें या यदि समस्या बनी रहती है तो सहायता से संपर्क करें।"
-    }
+function parseCropSuggestionText(rawText: string): CropSuggestionResponse {
+  const cleaned = rawText.replace(/\r/g, '').trim();
+  const lines = cleaned.split('\n').map((line) => line.trim()).filter(Boolean);
+
+  let message = '';
+  const suggestedCrops: CropSuggestionResponse['suggestedCrops'] = [];
+
+  let currentCropName = '';
+  let currentReasonLines: string[] = [];
+
+  const flushCurrentCrop = () => {
+    if (!currentCropName) return;
+    suggestedCrops.push({
+      name: currentCropName,
+      rationale: currentReasonLines.join(' ').trim() || 'Suitable for this season and region'
+    });
+    currentCropName = '';
+    currentReasonLines = [];
   };
-  
-  const lang = language.toLowerCase();
-  const msg = messages[lang as keyof typeof messages] || messages.english;
-  
+
+  for (const line of lines) {
+    if (line.startsWith('SUMMARY:')) {
+      message = line.replace(/^SUMMARY:\s*/i, '').trim();
+      continue;
+    }
+
+    if (line.startsWith('CROP:')) {
+      flushCurrentCrop();
+      currentCropName = line.replace(/^CROP:\s*/i, '').trim();
+      continue;
+    }
+
+    if (line.startsWith('REASON:')) {
+      currentReasonLines.push(line.replace(/^REASON:\s*/i, '').trim());
+      continue;
+    }
+
+    if (currentCropName) {
+      currentReasonLines.push(line);
+    } else if (!message) {
+      message = line;
+    }
+  }
+
+  flushCurrentCrop();
+
+  if (suggestedCrops.length === 0) {
+    const numberedMatches = [...cleaned.matchAll(/(?:^|\n)\d+[\).\-\s]+(.+?)(?=\n\d+[\).\-\s]+|\s*$)/gs)];
+    for (const match of numberedMatches.slice(0, 4)) {
+      const block = match[1].trim();
+      const [firstLine, ...rest] = block.split('\n').map((line) => line.trim()).filter(Boolean);
+      if (!firstLine) continue;
+
+      const splitMatch = firstLine.match(/^([^:-]+)[:\-]\s*(.+)$/);
+      suggestedCrops.push({
+        name: splitMatch?.[1]?.trim() || firstLine,
+        rationale: [splitMatch?.[2]?.trim(), ...rest].filter(Boolean).join(' ').trim() || 'Suitable for this season and region'
+      });
+    }
+  }
+
   return {
-    message: msg.message,
-    suggestedCrops: [
-      {
-        name: "Temporary Issue",
-        rationale: msg.error
-      }
-    ]
+    message: message || 'Here are the best crop recommendations based on your inputs.',
+    suggestedCrops
   };
 }

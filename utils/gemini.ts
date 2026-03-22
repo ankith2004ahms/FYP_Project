@@ -72,7 +72,7 @@ function mapLanguageToBCP47(lang: string) {
  * Returns { textBody, status, headers } where headers contains content-type if available.
  */
 export async function sendRawGeminiRequest(requestBody: any, modelName = 'gemini-2.5-flash', headersExtra?: Record<string,string>) {
-  const geminiKey = process.env.GEMINI_API_KEY;
+  const geminiKey = 'AIzaSyAgsr5rBkoKN3QeQmywwaT-cIeafDre-u4';
   const configuredUrl = process.env.GEMINI_API_URL || '';
   if (!geminiKey) {
     throw new Error('Gemini API key missing (set GEMINI_API_KEY in .env)');
@@ -173,10 +173,10 @@ export async function predictDiseaseFromImage(
   modelName = 'gemini-2.5-flash',
   language = 'english'
 ): Promise<GeminiPrediction> {
-  const geminiKey = process.env.GEMINI_API_KEY;
+  const geminiKey = 'AIzaSyAgsr5rBkoKN3QeQmywwaT-cIeafDre-u4';
   const configuredUrl = process.env.GEMINI_API_URL || '';
   if (!geminiKey) {
-    throw new Error('Gemini API key missing (set GEMINI_API_KEY in .env)');
+    throw new Error('Gemini API key missing');
   }
 
   // Build endpoint URL for generateContent
@@ -186,7 +186,7 @@ export async function predictDiseaseFromImage(
   // Build a strict prompt that lists the allowed classes and instructs Gemini to respond with ONLY
   // the exact disease NAME from the list (one line, no JSON, no punctuation, no extra text).
   const instruction = `You are an agricultural expert. Analyze the provided plant image and identify the disease.\n` +
-    `IMPORTANT: Respond with exactly ONE token: the disease NAME (plain text) and it must be in the ${language} language that the user requested and it MUST be one of the following canonical classes (do not change casing or punctuation):\n\n` +
+    `IMPORTANT: Respond with exactly ONE token: the disease NAME (plain text) and it must be strictly in the ${language} language that the user requested and it MUST be one of the following canonical classes (do not change casing or punctuation):\n\n` +
     /* (canonical class list omitted to keep prompt short) */ +
     `\n\nIf you are not certain, still choose the single most likely class from the list. Do NOT return JSON, percentages, explanations, or any other text — only the single disease name from the list.`;
 
