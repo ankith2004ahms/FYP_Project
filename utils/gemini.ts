@@ -72,7 +72,7 @@ function mapLanguageToBCP47(lang: string) {
  * Returns { textBody, status, headers } where headers contains content-type if available.
  */
 export async function sendRawGeminiRequest(requestBody: any, modelName = 'gemini-2.5-flash', headersExtra?: Record<string,string>) {
-  const geminiKey = 'AIzaSyAgsr5rBkoKN3QeQmywwaT-cIeafDre-u4';
+  const geminiKey = 'AIzaSyAT6hEEHNrlt9M1Z_aLNYGwNjTj4biUOh8';
   const configuredUrl = process.env.GEMINI_API_URL || '';
   if (!geminiKey) {
     throw new Error('Gemini API key missing (set GEMINI_API_KEY in .env)');
@@ -173,7 +173,7 @@ export async function predictDiseaseFromImage(
   modelName = 'gemini-2.5-flash',
   language = 'english'
 ): Promise<GeminiPrediction> {
-  const geminiKey = 'AIzaSyAgsr5rBkoKN3QeQmywwaT-cIeafDre-u4';
+  const geminiKey = 'AIzaSyAT6hEEHNrlt9M1Z_aLNYGwNjTj4biUOh8';
   const configuredUrl = process.env.GEMINI_API_URL || '';
   if (!geminiKey) {
     throw new Error('Gemini API key missing');

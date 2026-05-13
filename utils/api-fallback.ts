@@ -9,7 +9,7 @@ import { generateText, generateJSON, isOllamaAvailable } from './ollama';
 
 function getGeminiApiKey(): string | null {
   // return 'AIzaSyAgsr5rBkoKN3QeQmywwaT-cIeafDre-u4' || null;
-  const geminiKey = 'AIzaSyAgsr5rBkoKN3QeQmywwaT-cIeafDre-u4';
+  const geminiKey = 'AIzaSyAT6hEEHNrlt9M1Z_aLNYGwNjTj4biUOh8';
   return geminiKey || null;
 }
 

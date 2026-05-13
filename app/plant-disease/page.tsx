@@ -17,6 +17,13 @@ interface DiseaseData {
   preventiveMeasures?: string[];
 }
 
+const normalizeConfidence = (value: unknown) => {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return undefined;
+  const percentValue = numericValue <= 1 ? numericValue * 100 : numericValue;
+  return Math.round(percentValue * 100) / 100;
+};
+
 export default function PlantDiseasePage() {
   const { isSignedIn, user } = useUser();
   const userId = user?.id;
@@ -99,6 +106,7 @@ export default function PlantDiseasePage() {
       // If this came from Gemini, delay showing the disease name for 5 seconds, otherwise show immediately
       const source = data.source || 'unknown';
       const displayName = data.displayName || data.disease;
+      const confidence = normalizeConfidence(data.confidence);
 
       if (displayTimeoutRef.current) {
         clearTimeout(displayTimeoutRef.current);
@@ -107,13 +115,13 @@ export default function PlantDiseasePage() {
 
       if (source === 'gemini') {
         // show a temporary placeholder while we wait to display the name
-        setDiseaseData({ disease: 'Detecting...', date: data.date });
+        setDiseaseData({ disease: 'Detecting...', date: data.date, confidence });
         displayTimeoutRef.current = window.setTimeout(() => {
-          setDiseaseData(prev => ({ ...(prev || {}), disease: displayName, date: data.date }));
+          setDiseaseData(prev => ({ ...(prev || {}), disease: displayName, date: data.date, confidence }));
           displayTimeoutRef.current = null;
         }, 5000);
       } else {
-        setDiseaseData(prev => ({ ...(prev || {}), disease: displayName, date: data.date }));
+        setDiseaseData(prev => ({ ...(prev || {}), disease: displayName, date: data.date, confidence }));
       }
     } catch (err) {
       setError(`Failed to analyze image: ${err instanceof Error ? err.message : String(err)}`);
@@ -187,7 +195,7 @@ export default function PlantDiseasePage() {
         imageUrl,
         imageName: selectedImage.name,
         predictedDisease: diseaseData.disease,
-        confidence: diseaseData.confidence || 0,
+        confidence: diseaseData.confidence ?? 0,
         treatmentRecommendation: diseaseData.treatmentInfo,
         symptoms: diseaseData.symptoms || [],
         preventiveMeasures: diseaseData.preventiveMeasures || [],
@@ -317,6 +325,12 @@ export default function PlantDiseasePage() {
                     <p className="text-gray-700 mb-1 font-medium">Detected Disease:</p>
                     <p className="text-xl font-bold text-green-800">{diseaseData.disease}</p>
                   </div>
+                  {typeof diseaseData.confidence === 'number' && (
+                    <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+                      <p className="text-gray-700 mb-1 font-medium">Confidence Score:</p>
+                      <p className="text-xl font-bold text-blue-800">{diseaseData.confidence}%</p>
+                    </div>
+                  )}
                   <div className="flex items-center">
                     <button
                       onClick={saveDiseaseDetection}
